@@ -184,7 +184,7 @@ def save_racedata(racelist): #Save Race class instances
 
 def main():
 # get scraping target and login info from config file
-    configFile='../config/scraping_payload.ini'
+    configFile='../hracing_private/scraping_payload.ini'
     pageConfig = configparser.ConfigParser()
     pageConfig.read(configFile)
     oriheader=dict(pageConfig['oriheader'])
