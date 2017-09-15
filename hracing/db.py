@@ -1,23 +1,23 @@
-import sqlite3
 import pymongo
+import re
 
 from datetime import datetime
 from bs4 import BeautifulSoup
 
-importlib.reload(hracing.tools)
-from hracing.tools import flatten
 from hracing.tools import cols_from_html_tbl
 from hracing.tools import isnumber
 
 def parse_racesheet(racesheet,verbose = False):
-    """ Parse html in racesheet, get content, put in mongoDB """
+    """ Parse html in racesheet, get content, return race as hierarchical dict """
      
     #Parse racesheet and get basic html segments
     html = BeautifulSoup(racesheet[0].content,'html5lib')
     top_container = html.find('div',{'id':'racecardTopContainer'})
     race_info_box = top_container.find('div',{'class':'racesList'})
     racecard = html.find('div',{'class':'racecardList'}) #single horse containers
-             
+    finish_table = html.find('table',{'class':'finishTable'})
+    
+    #Extract race-level data         
     race_ID = int(top_container["data-raceid"]) #or get directly from import script?
     
     n_starter = race_info_box.find('li',{'class':'starter'}).text
@@ -61,8 +61,9 @@ def parse_racesheet(racesheet,verbose = False):
         "stakes": stakes,
         "currency": currency
         }
+   
     
-   #Extract horse-specific data from racesheet
+   #Extract horse-level data
     horse_clearfixes = racecard.find_all('li',{'class','clearfix'})
     raw_starter_no1 = html.find_all('span',{'class':'count1'})
     raw_starter_no2 = html.find_all('span',{'class':'count2'})
@@ -146,66 +147,45 @@ def parse_racesheet(racesheet,verbose = False):
         horse_out['forms']=form_out
         horse_list.append(horse_out)
                        
-    race["horses"] = horse_list            
-    return race
+    race["horses"] = horse_list
+
+    #Extract finish-data
+    finish_list = []
+    if finish_table is not None: 
+        finish_tbl = cols_from_html_tbl(finish_table)
+        for i,row in enumerate(finish_tbl[0]):
+            place = int(finish_tbl[0][i])
+            starter_no1 = finish_tbl[1][i]
+            name = finish_tbl[2][i]
+            odd = float(finish_tbl[3][i].replace(',','.').replace('-','NaN'))
+            jockey = finish_tbl[4][i]
+            info = finish_tbl[5][i]
             
+            finisher_out={"place" : place,   
+                "starter_no1" : starter_no1,
+                "name" : name,
+                "odd" : odd,
+                "jockey" : jockey,
+                "info" : info
+                 }
+            finish_list.append(finisher_out)
+            
+    race["finish"] = finish_list
+    
+    return race
+    
+    ### TODO:
+    ### 2.) PERFORM ONE COMPLETE IMPORT RUN ON NEW SITE
+    ### 3.) TRANSFER OLD DB TO MONGODB
+    ### 4.) ADD FANCY GRAPHS TO DATA DESCRIPTION
+    ### 5.) REFACTURE AND IMPELEMENT OLD PIPELINE SETUP AND ML
+              
     # Call mongoDB and dump race
+def mongo_insert_race(race):
+    """ Take single race, add to local mongoDB, make race_ID index """
     client = pymongo.MongoClient()
     db = client.races
     db.races.create_index([("race_ID", pymongo.ASCENDING)])
     results = db.races.insert_one(race)
         
 
-#        #Extract finish-data
-#        finish_raw = re.findall(
-#            '<table class = "finishTable">.*?</table>',
-#            textraw,re.S)#get finishtable
-#        #self.finish_raw = finish_raw
-#        if finish_raw:
-#            trows = re.findall(
-#                '<tr>(.*?)</tr>',
-#                finish_raw[0],
-#                re.S) #gets all table rows
-#            self.finishall = [re.findall('<(?:th|td) .*?>(.*?)</(?:th|td)>',
-#                                row,re.S)
-#                            for row 
-#                            in trows] #gets all table headers or table cells for each row
-#            self.finisherNames = ([x[2]
-#                             for x
-#                             in self.finishall[1:]]) # gets finisher's starter numbers from second row on in second column
-#            self.finishersRaw = ([x[1]
-#                             for x
-#                             in self.finishall[1:]]) # gets finisher's starter numbers from second row on in second column
-#            self.placementsRaw = ([int(x[0])
-#                             for x
-#                             in self.finishall[1:]])
-#        
-#            self.finishers = [float('nan')] * self.starters
-#            #VERSION 1:
-#            #fill all fields with mean finish of all starters not placed
-#            #PROBLEM: will systematically affect relationship between starters and finish >> starter only useful as a predictor of winners
-#            self.fillfinish = [np.mean([self.starters-sum(self.nonrunners),
-#                              1+len(self.finishersRaw)])]* self.starters
-#            #VERSION 2:
-#            #fill all fields with nan
-#            #PROBLEM: more horses will be dropped
-#            #self.fillfinish = [float('nan')]* self.starters
-#            #VERSION 3:
-#            #fill all fields with random numbers
-#            #PROBLEM: random variance added
-#            #IMPLEMENTED IN ANALYSIS-PRE-PROCESSING
-#            if self.finisherNames: # in case finisher list has names
-#                for i,finny in enumerate(self.finisherNames):
-#                    finindex = self.horsenames.index(finny)#get index of finisher 
-#                    self.finishers[finindex] = self.placementsRaw[i]
-#                    self.fillfinish[finindex] = self.placementsRaw[i]
-#            elif self.finishersRaw:
-#                for i,finny in enumerate(self.finishersRaw):
-#                    finindex = self.starterNo1.index(finny)#get index of finisher 
-#                    self.finishers[finindex] = self.placementsRaw[i]
-#                    self.fillfinish[finindex] = self.placementsRaw[i]
-#        else:
-#            self.finishall = []
-#            self.finishersRaw = []
-#            self.finishers = float('nan')
-#            self.fillfinish = float('nan')
