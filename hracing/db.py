@@ -6,12 +6,13 @@ from bs4 import BeautifulSoup
 
 from hracing.tools import cols_from_html_tbl
 from hracing.tools import isnumber
+from hracing.tools import bf4_text # checks if bf4 elements exist
 
 def parse_racesheet(racesheet,verbose = False):
     """ Parse html in racesheet, get content, return race as hierarchical dict """
      
     #Parse racesheet and get basic html segments
-    html = BeautifulSoup(racesheet[0].content,'html5lib')
+    html = BeautifulSoup(racesheet.content,'html5lib')
     top_container = html.find('div',{'id':'racecardTopContainer'})
     race_info_box = top_container.find('div',{'class':'racesList'})
     racecard = html.find('div',{'class':'racecardList'}) #single horse containers
@@ -20,33 +21,35 @@ def parse_racesheet(racesheet,verbose = False):
     #Extract race-level data         
     race_ID = int(top_container["data-raceid"]) #or get directly from import script?
     
-    n_starter = race_info_box.find('li',{'class':'starter'}).text
-    n_starter = int(n_starter.split()[0])
-    dateraw = top_container.h1.text.split()[-1]
-    timeraw = race_info_box.find('li',{'class':'time'}).text
-    race_date_time = datetime.strptime(dateraw+'_'+timeraw,'%d.%m.%Y_%H:%M')
+    n_starter_raw = bf4_text(race_info_box.find('li',{'class':'starter'}))
+    n_starter = int(n_starter_raw.split()[0]) if n_starter_raw else 0
+    dateraw = bf4_text(top_container.h1).split()
+    timeraw = bf4_text(race_info_box.find('li',{'class':'time'}))
+    race_date_time = datetime.strptime(dateraw[-1] if dateraw else ""
+                                       +'_'
+                                       +timeraw,'%d.%m.%Y_%H:%M')
     
     country_raw = top_container.h2.a['href']
     country = re.findall('/races\?country\s*=\s*(...)&date\s*=',country_raw)
     country = country[0]
 
-    race_name = top_container.h2.text.strip()
+    race_name = bf4_text(top_container.h2).strip()
     
-    distance = race_info_box.find('li',{'class':'distance'}).text
-    distance = float(distance.split()[0])
+    distance = bf4_text(race_info_box.find('li',{'class':'distance'}))
+    distance = float(distance.split()[0]) if distance else float('nan')
 
-    ground = race_info_box.find('li',{'class':'raceGround'}).text
-    ground = str(ground)
+    ground=bf4_text(race_info_box.find('li',{'class':'raceGround'}))
     
-    race_type_allowance = race_info_box.find('div',{'class':'raceTypeAllowance'}).text
-    race_type_allowance = str(race_type_allowance)   # Verbose version of race_type written in box
+    # Verbose version of race_type written in box
+    race_type_allowance = bf4_text(race_info_box.find('div',{'class':'raceTypeAllowance'}))
     
-    race_type_symbol = top_container.i["class"][1]    # Short version of race_type from symbol (may miss steeplechase with hurdles)
-    race_number = int(race_info_box('div',{'class':'counter'})[0].text.strip())
+    # Short version of race_type from symbol (may miss steeplechase with hurdles)
+    race_type_symbol = top_container.i["class"][1]
+    race_number = int(bf4_text(race_info_box('div',{'class':'counter'})[0]).strip())
 
-    stakes_raw = race_info_box.find('li',{'class':'stakes'}).text
-    stakes = float(stakes_raw.split()[0])
-    currency = stakes_raw.split()[1]
+    stakes_raw = bf4_text(race_info_box.find('li',{'class':'stakes'}))
+    stakes = float(stakes_raw.split()[0]) if stakes_raw else float('nan')
+    currency = stakes_raw.split()[1] if stakes_raw else ""
     
     race = {"race_ID": race_ID,
         "n_starter": n_starter,
@@ -78,42 +81,57 @@ def parse_racesheet(racesheet,verbose = False):
     horse_list = []
     #Loop over all horses and store corresponding data in dict
     for i,horse in enumerate(horse_clearfixes):
-        if 'nonrunner' in horse_clearfixes[i]['class']:
-            nonrunner =  True
+        nonrunner =  True if 'nonrunner' in horse_clearfixes[i]['class'] else False
+        starter_no1 =bf4_text(raw_starter_no1[i])
+        starter_no2 =bf4_text(raw_starter_no2[i])
+        name = bf4_text(raw_name[i]).strip()
+        if name.strip(): # sometimes there are empty cells... riding a horse with no name
+            jockey = bf4_text(raw_jockey[i]).strip()
+            trainer = bf4_text(raw_trainer[i]).strip()
+            heritage = statInfo[i].span.nextSibling
+            heritage = re.split('–',heritage)
+            heritage1 = heritage[0].strip()
+            heritage2 = heritage[1].strip()
+            owner = statInfo[i].span.nextSibling.nextSibling.nextSibling
+            weight = bf4_text(raw_weight[i]).split()
+            weight = float(weight[0].strip().replace(',','.')) if weight else float('nan')
+            age_and_sex = bf4_text(raw_age_and_sex[i])
+            age = float(age_and_sex.split('j. ')[0]) if age_and_sex else float('nan')
+            sex = age_and_sex.split('j. ')[1] if  age_and_sex else ""
+            odd_txt = bf4_text(raw_odd[i])
+            odd = float(odd_txt.replace(',','.').replace('-','nan')) if odd_txt else float('nan')
+            
+            horse_out = {
+                "name" : name,
+                "nonrunner" : nonrunner,
+                "starter_no1" : starter_no1,
+                "starter_no2" : starter_no2,
+                "jockey" : jockey,
+                "trainer" : trainer,
+                "heritage1" : heritage1,
+                "heritage2" : heritage2,
+                "owner" : owner,
+                "weight" : weight,
+                "age" : age,
+                "sex" : sex,
+                "odd" : odd
+                }
         else:
-            nonrunner =  False 
-        starter_no1 =raw_starter_no1[i].text
-        starter_no2 =raw_starter_no2[i].text
-        name = raw_name[i].text.strip()
-        jockey = raw_jockey[i].text.strip()
-        trainer = raw_trainer[i].text.strip()
-        heritage = statInfo[i].span.nextSibling
-        heritage = re.split('–',heritage)
-        heritage1 = heritage[0].strip()
-        heritage2 = heritage[1].strip()
-        owner = statInfo[i].span.nextSibling.nextSibling.nextSibling
-        weight = raw_weight[i].text.split()[0].strip()
-        weight = float(weight.replace(',','.'))
-        age_and_sex = raw_age_and_sex[i].text.split('j. ')
-        age = float(age_and_sex[0])
-        sex = age_and_sex[1]
-        odd = float(raw_odd[i].text.replace(',','.').replace('-','NaN'))
-        
-        horse_out = {
-            "name" : name,
-            "nonrunner" : nonrunner,
-            "starter_no1" : starter_no1,
-            "starter_no2" : starter_no2,
-            "jockey" : jockey,
-            "trainer" : trainer,
-            "heritage1" : heritage1,
-            "heritage2" : heritage2,
-            "weight" : weight,
-            "age" : age,
-            "sex" : sex,
-            "odd" : odd
-            }
-        
+           horse_out = {
+                "name" : name,
+                "nonrunner" : nonrunner,
+                "starter_no1" : "",
+                "starter_no2" : "",
+                "jockey" : "",
+                "trainer" : "",
+                "heritage1" : "",
+                "heritage2" : "",
+                "owner" : "",
+                "weight" : "",
+                "age" : "",
+                "sex" : "",
+                "odd" : ""
+                }
         #Extract forms (prior race performance) from tables in racecards. If there are no prior formen, there are is no table...
         if horse.table is not None:
             currtable = cols_from_html_tbl(horse.table)

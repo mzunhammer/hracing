@@ -14,6 +14,10 @@ def flatten(l, ltypes=(list, tuple)):
         i += 1
     return ltype(l)
 
+def bf4_text(bf4_element):
+    """ Checks BeautifulSoup element for existence and returns str"""
+    return "" if bf4_element is None else bf4_element.text
+
 def cols_from_html_tbl(tbl): 
     """ Extracts columns from html-table tbl and puts columns in a list.
     tbl must be a results-object from BeautifulSoup)"""
