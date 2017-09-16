@@ -1,19 +1,14 @@
-#!/Users/matthiaszunhammer/anaconda/bin/python
-# coding: utf-8
-# Function to download yesterday's races and associated raceforms from germantote
+# Functions to download yesterday's races and associated raceforms from host
 
-# Header
+import configparser
 import requests
 import re
 import sys
 import time
-import configparser
+from datetime import datetime, timedelta
 
 from hracing.db import parse_racesheet
 from hracing.db import mongo_insert_race
-
-from datetime import datetime, timedelta
-#from RaceClass import Race
 
 
 def download_list_of_races(oriheader,pastdays=3,datestr=None):
@@ -24,48 +19,44 @@ def download_list_of_races(oriheader,pastdays=3,datestr=None):
     b) by specifying a datestr of the format YYYY-MM-DD.
     Default is to download races from THREE DAYS AGO, which is useful for
     data-base building since this avoids unfinished US/CAN races
-    
-    Return a list of raceids and raceid_urls, which are clustered according to race-location"""
+    Returns a lists of raceids and a lists of raceid_urls,
+    nested in a list of race-locations"""
     
     # Compose URL
-    if datestr==None:
-        d=datetime.today()-timedelta(days=int(pastdays))
-        datestr=d.strftime('%Y-%m-%d')
-        
-    yesterdayurl='/races?date='+datestr
-    baseurl='https://'+oriheader['host']
-    url= baseurl+yesterdayurl
-    
-    # Download
+    if datestr == None:
+        d = datetime.today()-timedelta(days=int(pastdays))
+        datestr = d.strftime('%Y-%m-%d')
+    yesterdayurl = '/races?date=' + datestr
+    baseurl = 'https://' + oriheader['host']
+    url = baseurl + yesterdayurl 
+    # Actual download
     tpage=requests.get(url) 
-    
     #Console feedback
     print("Time: " + d.strftime(('%Y-%m-%d-%H-%M')))
     print("Import race IDs for " + datestr)
     print("From " + url)
-
     #Get list of race-locations (TR)
-    tr_urls_raw=re.split(
-            '\<div class\=\"dayHeader\"\>',
-            tpage.text)
+    tr_urls_raw=re.split('\<div class\=\"dayHeader\"\>',tpage.text)
     tr_urls=re.findall(
-            '\<div class\=\"meetingRaces\" data-url\=\"(/meetings/meeting\?id\=\d+)\">',
+            '\<div class\=\"meetingRaces\" '
+            'data-url\=\"(/meetings/meeting\?id\=\d+)\">',
             tr_urls_raw[1])
-    
     # Loop through race-locations, get raceIDs and urls
     raceid_urls=[]
     raceids=[]
-    for (i, tr_url) in enumerate(tr_urls):
+    for tr_url in tr_urls:
         url=baseurl+tr_url
-        temptrace=requests.get(url)
+        temp_race=requests.get(url)
         raceid_urls.append(
             re.findall(
-                    '\<li\sclass\=\"raceli\s*status_.*\s*clearfix\"\s*data-url\=\"(\/race\?id\=\d*\&country\=.+\&track\=.*\&date=\d\d\d\d-\d\d-\d\d)\"',
-                    temptrace.text))
+                    '\<li\sclass\=\"raceli\s*status_.*\s*clearfix\"\s*data-url\=\"'
+                    '(\/race\?id\=\d*\&country\=.+\&track\=.*\&date=\d\d\d\d-\d\d-\d\d)\"',
+                    temp_race.text))
         raceids.append(
             re.findall(
-                    '\<li\sclass\=\"raceli\s*status_.*\s*clearfix\"\s*data-url\=\"\/race\?id\=(\d*)\&country\=.+\&track\=.*\&date=\d\d\d\d-\d\d-\d\d\"',
-                    temptrace.text))
+                    '\<li\sclass\=\"raceli\s*status_.*\s*clearfix\"\s*data-url\=\"'
+                    '\/race\?id\=(\d*)\&country\=.+\&track\=.*\&date=\d\d\d\d-\d\d-\d\d\"',
+                    temp_race.text))
     print("Finished importing raceIDs: " + d.strftime(('%Y-%m-%d-%H-%M')))
     return raceids, raceid_urls
 
@@ -80,9 +71,8 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
     data-base building since this avoids US/CAN races are not finished
     Return a list of raceids and raceid_urls, which are clustered according to race-location"""
 
-    # header of post simulating browser
     baseurl='https://'+oriheader['host']
-    racemindur=25 # minimum time per/downloaded race in seconds
+    racemindur=25 # minimum time per/download in seconds to avoid getting kicked
     d=datetime.today()
     a=time.monotonic()
     #formen=[]
@@ -97,7 +87,6 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
                            data=payload)
                 # Check if login was successful
                 if not re.search('"login":true',p.text):
-                    #print(p.text) #For debugging: Login-response received
                     sys.exit("LOGIN FAILED")
                 #For each single race at each race location...
                 for (j, r_url) in enumerate(raceid_url):
@@ -108,8 +97,6 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
                     racesheet=s.get(baseurl+r_url,
                                             headers = oriheader,
                                             cookies=s.cookies)
-                    
-                    
                     #Get horseformen urls for that race
                     # — Formen associated with horses are currently mostly empty...
                     #include again when host updates site
@@ -145,9 +132,8 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
                     if rwaittime>0:
                         time.sleep(rwaittime)
                    # Print current runtime, current race, and number of formen extracted  
-                    print("Time: "
-                          +str(time.monotonic()-a)
-                          +"    RaceID: "+raceids[i][j])
+                    print("Finished: "
+                          +str(time.monotonic()-a))
                          # +"   n Formen: "+str(len(curr_formen)))
                  
         #Exception of Request
