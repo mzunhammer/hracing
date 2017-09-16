@@ -161,7 +161,7 @@ def main():
     payload=dict(pageConfig['payload'])
 
     raceids, raceid_urls=download_list_of_races(oriheader)
-    racesheets,formen=scrape_races(raceids, raceid_urls, oriheader, payload)
+    scrape_races(raceids, raceid_urls, oriheader, payload)
 
 
 if __name__ == "__main__":
