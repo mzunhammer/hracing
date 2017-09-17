@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 from hracing.db import parse_racesheet
 from hracing.db import mongo_insert_race
-
+from hracing.tools import delay_scraping
 
 def download_list_of_races(oriheader,pastdays=3,datestr=None):
     """ Fetch a list of all raceIDs and raceURLs listed on host for a given day.
@@ -72,10 +72,10 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
     Return a list of raceids and raceid_urls, which are clustered according to race-location"""
 
     baseurl='https://'+oriheader['host']
-    racemindur=25 # minimum time per/download in seconds to avoid getting kicked
+    race_min_dur=25 # minimum time(s)/race download to avoid getting kicked
+    form_min_dur=2 # minimum time(s)/form download to avoid getting kicked
     d=datetime.today()
     a=time.monotonic()
-    #formen=[]
     tries=1
     #For each race location...
     for (i, raceid_url) in enumerate(raceid_urls):
@@ -92,29 +92,26 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
                 for (j, r_url) in enumerate(raceid_url):
                     print("Start downloading race_ID: "+raceids[i][j])
                     #Check current time
-                    rstarttime=time.monotonic()
+                    start_time=time.monotonic()
                     #Get current racesheet
                     racesheet=s.get(baseurl+r_url,
                                             headers = oriheader,
                                             cookies=s.cookies)
-                    #Get horseformen urls for that race
-                    # — Formen associated with horses are currently mostly empty...
-                    #include again when host updates site
-                    
-                    #horseform_urls=(re.findall("window.open\(\'(.+?)', \'Formguide\'",
-                    #                           racesheet.text))
-                    #curr_formen=[]
-                    #Get horseformen-sheets for that race
-                    #for (k, horseform_url) in enumerate(horseform_urls):
-                    #    curr_formen.append(s.get(baseurl+horseform_url,
-                    #                             headers = oriheader,
-                    #                             cookies=s.cookies))
-                    #formen.append(curr_formen)
-                    
+                    #Get horseforms urls for that race                    
+                    horseform_urls=(re.findall("window.open\(\'(.+?)', \'Formguide\'",
+                                               racesheet.text))
+                    forms=[]
+                    #Get horseforms-sheets for that race
+                    for (k, horseform_url) in enumerate(horseform_urls):
+                        start_time_2=time.monotonic()
+                        forms.append(s.get(baseurl+horseform_url,
+                                                 headers = oriheader,
+                                                 cookies=s.cookies))
+                        delay_scraping(start_time_2,form_min_dur)
                     # Try parsing current race and add to mogodb. If something fails
                     # Save race as .txt in folder for troubleshooting.
-                    #try:
-                    race=parse_racesheet(racesheet)
+# UNCOMMENT TRY/EXCEPT WHEN UP AND RUNNING #try: 
+                    race=parse_racesheet(racesheet,forms)
                     mongo_insert_race(race)
 #                    except Exception as e:
 #                        #Save raw html text to file for debugging purposes, overwrite every time
@@ -126,15 +123,12 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
 #                        with open(rawtextFilename, 'wb') as text_file:
 #                            text_file.write(racesheet.content)
                     
-                    #Wait a little if faster than racemindur to avoid scraping too fast
-                    rtotaltime=time.monotonic()-rstarttime
-                    rwaittime=racemindur-rtotaltime
-                    if rwaittime>0:
-                        time.sleep(rwaittime)
-                   # Print current runtime, current race, and number of formen extracted  
+                    delay_scraping(start_time,race_min_dur)# Slow scraping to avoid getting kicked from server.
+
+                   # Print current runtime, current race, and number of forms extracted  
                     print("Finished: "
                           +str(time.monotonic()-a))
-                         # +"   n Formen: "+str(len(curr_formen)))
+                         # +"   n forms: "+str(len(curr_forms)))
                  
         #Exception of Request
         except requests.exceptions.RequestException as e:
@@ -148,8 +142,6 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
                 break
     print("Finished: Download race xmls: "
             + d.strftime('%Y-%m-%d-%H-%M'))
-    racesheet
-    #return racesheet #,formen
 
 
 def main():

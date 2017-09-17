@@ -7,14 +7,15 @@ from bs4 import BeautifulSoup
 from hracing.tools import cols_from_html_tbl
 from hracing.tools import isnumber
 from hracing.tools import bf4_text # checks if bf4 elements exist
+from IPython.core.debugger import set_trace
 
 
-def parse_racesheet(racesheet,verbose = False):
+def parse_racesheet(racesheet,forms,verbose = False):
     """ Parse html in racesheet, get content, return race as hierarchical dict """
     #Parse racesheet and get basic html segments
     html = BeautifulSoup(racesheet.content,'html5lib')
     race = _parse_race_level(html)
-    race["horses"] = _parse_horse_level(html)
+    race["horses"] = _parse_horse_level(html,forms)
     race["finish"] = _parse_finish(html)
     return race
 
@@ -44,7 +45,7 @@ def _parse_race_level(html):
     race['currency'] = stakes_raw.split()[1] if stakes_raw else ""
     return race
 
-def _parse_horse_level(html):
+def _parse_horse_level(html,forms):
     #Parse html for racecards, return a list of dicts with horse-level info
     racecard = html.find('div',{'class':'racecardList'}) #single horse containers
     horse_clearfixes = racecard.find_all('li',{'class','clearfix'})
@@ -82,11 +83,13 @@ def _parse_horse_level(html):
             odd_txt = bf4_text(raw_odd[i])
             horse['odd'] = float(odd_txt.replace(',','.').replace('-','nan')) if odd_txt else float('nan')
             horse['short_forms']=_extract_short_forms(clearfix.table)
+            horse['long_forms'] = _extract_long_forms(forms[i])
+            horse['long_forms'] = ""
         else:
            print('Warning: Horse with name: could not be parsed properly.')
            horse = {}
         horse_list.append(horse)
-    return horse_list        
+    return horse_list
 
 def _extract_short_forms(formen_table):
     #Extract forms (prior race performance) from tables in racecards. If there are no prior formen, there are is no table...
@@ -107,8 +110,31 @@ def _extract_short_forms(formen_table):
         short_form['n_past_races'] = len(currtable[0])
     else:
         short_form={}
-    return short_form 
-  
+    return short_form
+
+def _extract_long_forms(form):
+    form_html = BeautifulSoup(form.content,'html5lib')
+    overview = form_html.find('section',{'id':'formguideOverview'})
+    form_main = form_html.find('section',{'id':'formguideForm'})
+    col = cols_from_html_tbl(form_main.table)
+    if col:
+        long_form={}
+        long_form['past_racedates'] = [datetime.strptime(i,'%d.%m.%Y') for i in col[0]]
+        long_form['past_race_courses'] = col[2]
+        long_form['past_finishes'] = [float(i.strip('.')) if isnumber(i.strip('.'))
+            else float('nan') for i in col[1]]        
+        long_form['past_distances'] = [float(i.strip(' m')) if isnumber(i.strip(' m'))
+            else float('nan') for i in col[3]]        
+        long_form['past_stakes'] = [float(i) if isnumber(i)
+            else 'nan' for i in col[4]]        
+        long_form['past_jockeys'] = col[5]
+        long_form['past_odds'] = [float(i.replace(',','.').replace('-','nan')) if isnumber(i)
+            else float('nan') for i in col[6]]        
+        long_form['n_past_races'] = len(col[0])
+    else:
+        long_form={}
+    return long_form 
+
 def _parse_finish(html):
     #Parse html, return a list of dicts with finishers
     finish_table = html.find('table',{'class':'finishTable'})
@@ -135,10 +161,10 @@ def _parse_finish(html):
             
         
     ### TODO:
-    ### 1.) Include formen_long
+    ### 1.) ADD COMPARISON OF RACE_ID LIST WITH DB TO ALLOW CONTINUING DOWNLOADS
     ### 2.) PERFORM ONE COMPLETE IMPORT RUN ON NEW SITE
-    ### 3.) TRANSFER OLD DB TO MONGODB
-    ### 4.) ADD FANCY GRAPHS TO DATA DESCRIPTION
+    ### 3.) DESCRIPTICE GRAPHS FOR PRESENTATION
+    ### 3.) ADD FANCY GRAPHS TO DATA DESCRIPTION
     ### 5.) REFACTURE AND IMPELEMENT OLD PIPELINE SETUP AND ML
               
     # Call mongoDB and dump race
@@ -146,7 +172,7 @@ def mongo_insert_race(race):
     """ Take single race, add to local mongoDB, make race_ID index """
     client = pymongo.MongoClient()
     db = client.races
-    db.races.create_index([("race_ID", pymongo.ASCENDING)])
+    db.races.create_index([("race_ID", pymongo.ASCENDING)], unique=True)
     results = db.races.insert_one(race)
         
 

@@ -1,3 +1,5 @@
+import time
+
 def flatten(l, ltypes=(list, tuple)):
     """ Flattens nested lists l to yield a 1-d list"""
     ltype = type(l)
@@ -21,13 +23,16 @@ def bf4_text(bf4_element):
 def cols_from_html_tbl(tbl): 
     """ Extracts columns from html-table tbl and puts columns in a list.
     tbl must be a results-object from BeautifulSoup)"""
-    rows = tbl.find_all('tr')
-    for row in rows:
-        cols = row.find_all('td')
-        for i,cell in enumerate(cols):
-            if not'col_list' in locals():
-                col_list=[[] for x in range(len(cols))]
-            col_list[i].append(cell.text)
+    rows = tbl.tbody.find_all('tr')
+    if rows:
+        for row in rows:
+            cols = row.find_all('td')
+            for i,cell in enumerate(cols):
+                if not'col_list' in locals():
+                    col_list=[[] for x in range(len(cols))]
+                col_list[i].append(cell.text)
+    else:
+        col_list=[]
     return col_list
     
 def isnumber(s):
@@ -40,3 +45,14 @@ def isnumber(s):
             return False
     except ValueError:
         return False
+
+def delay_scraping(start_time, target_duration):
+    """ Calcultes time spent in requests loop up to now, compares to target duration
+     of loop and waits for the remainder.
+     Slows scraping to avoid getting kicked from server"""
+    curr_time=time.monotonic()-start_time
+    wait_time=target_duration-curr_time
+    if wait_time>0:
+        time.sleep(wait_time) 
+    
+    
