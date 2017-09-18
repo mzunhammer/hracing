@@ -5,6 +5,7 @@ import requests
 import re
 import sys
 import time
+import pymongo
 from datetime import datetime, timedelta
 
 from hracing.db import parse_racesheet
@@ -47,12 +48,12 @@ def download_list_of_races(oriheader,pastdays=3,datestr=None):
     for tr_url in tr_urls:
         url=baseurl+tr_url
         temp_race=requests.get(url)
-        raceid_urls.append(
+        raceid_urls.extend(
             re.findall(
                     '\<li\sclass\=\"raceli\s*status_.*\s*clearfix\"\s*data-url\=\"'
                     '(\/race\?id\=\d*\&country\=.+\&track\=.*\&date=\d\d\d\d-\d\d-\d\d)\"',
                     temp_race.text))
-        raceids.append(
+        raceids.extend(
             re.findall(
                     '\<li\sclass\=\"raceli\s*status_.*\s*clearfix\"\s*data-url\=\"'
                     '\/race\?id\=(\d*)\&country\=.+\&track\=.*\&date=\d\d\d\d-\d\d-\d\d\"',
@@ -73,46 +74,51 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
 
     baseurl='https://'+oriheader['host']
     race_min_dur=25 # minimum time(s)/race download to avoid getting kicked
-    form_min_dur=2 # minimum time(s)/form download to avoid getting kicked
+    form_min_dur=3 # minimum time(s)/form download to avoid getting kicked
     d=datetime.today()
     a=time.monotonic()
     tries=1
+    
+    #Open new session...
+    with requests.Session() as s:              
+        p = s.post(baseurl+'/auth/validatepostajax',
+        headers = oriheader,
+        data=payload)
     #For each race location...
     for (i, raceid_url) in enumerate(raceid_urls):
-        try: 
-            #Open new session...
+        if not re.search('"login":true',p.text):
             with requests.Session() as s:              
                 p = s.post(baseurl+'/auth/validatepostajax',
-                           headers = oriheader,
-                           data=payload)
-                # Check if login was successful
-                if not re.search('"login":true',p.text):
-                    sys.exit("LOGIN FAILED")
-                #For each single race at each race location...
-                for (j, r_url) in enumerate(raceid_url):
-                    print("Start downloading race_ID: "+raceids[i][j])
-                    #Check current time
-                    start_time=time.monotonic()
-                    #Get current racesheet
-                    racesheet=s.get(baseurl+r_url,
-                                            headers = oriheader,
-                                            cookies=s.cookies)
-                    #Get horseforms urls for that race                    
-                    horseform_urls=(re.findall("window.open\(\'(.+?)', \'Formguide\'",
-                                               racesheet.text))
-                    forms=[]
-                    #Get horseforms-sheets for that race
-                    for (k, horseform_url) in enumerate(horseform_urls):
-                        start_time_2=time.monotonic()
-                        forms.append(s.get(baseurl+horseform_url,
-                                                 headers = oriheader,
-                                                 cookies=s.cookies))
-                        delay_scraping(start_time_2,form_min_dur)
-                    # Try parsing current race and add to mogodb. If something fails
-                    # Save race as .txt in folder for troubleshooting.
-# UNCOMMENT TRY/EXCEPT WHEN UP AND RUNNING #try: 
-                    race=parse_racesheet(racesheet,forms)
-                    mongo_insert_race(race)
+                headers = oriheader,
+                data=payload)
+        try: 
+            #For each single race...
+            print("Start downloading race_ID: "+raceids[i]+
+                " ("+str(i) +"/"+str(len(raceid_urls))+")")
+            #Check current time
+            start_time=time.monotonic()
+            #Get current racesheet
+            racesheet=s.get(baseurl+raceid_url,
+                                    headers = oriheader,
+                                    cookies=s.cookies)
+            #Get horseforms urls for that race                    
+            horseform_urls=(re.findall("window.open\(\'(.+?)', \'Formguide\'",
+                                       racesheet.text))
+            forms=[]
+            #Get horseforms-sheets for that race
+            for (k, horseform_url) in enumerate(horseform_urls):
+                start_time_2=time.monotonic()
+                forms.append(s.get(baseurl+horseform_url,
+                                         headers = oriheader,
+                                         cookies=s.cookies))
+                delay_scraping(start_time_2,form_min_dur)
+            # Try parsing current race and add to mogodb. If something fails
+            # Save race as .txt in folder for troubleshooting.
+            
+            # UNCOMMENT TRY/EXCEPT WHEN UP AND RUNNING
+            #try: 
+            race=parse_racesheet(racesheet,forms)
+            mongo_insert_race(race)
 #                    except Exception as e:
 #                        #Save raw html text to file for debugging purposes, overwrite every time
 #                        errordump='../hracing_private/failed_parsing/'
@@ -122,13 +128,12 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
 #
 #                        with open(rawtextFilename, 'wb') as text_file:
 #                            text_file.write(racesheet.content)
-                    
-                    delay_scraping(start_time,race_min_dur)# Slow scraping to avoid getting kicked from server.
+                
+            delay_scraping(start_time,race_min_dur)# Slow scraping to avoid getting kicked from server.
 
-                   # Print current runtime, current race, and number of forms extracted  
-                    print("Finished: "
-                          +str(time.monotonic()-a))
-                         # +"   n forms: "+str(len(curr_forms)))
+            # Print current runtime, current race, and number of forms extracted  
+            print("Finished: " +str(time.monotonic()-a))
+                     # +"   n forms: "+str(len(curr_forms)))
                  
         #Exception of Request
         except requests.exceptions.RequestException as e:
@@ -144,6 +149,18 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
             + d.strftime('%Y-%m-%d-%H-%M'))
 
 
+def get_races_IDs_not_in_db(raceids, raceid_urls):
+    client = pymongo.MongoClient()
+    db = client.races
+    race_IDs_db=[]
+    for race in db.races.find({},{'race_ID':1, '_id': 0}):
+        race_IDs_db.append(race['race_ID'])
+    race_zip=zip(raceids,raceid_urls)
+    filtered_race_zip = filter(lambda x: int(x[0]) not in race_IDs_db,race_zip)
+    novel_raceids,novel_raceid_urls =zip(*filtered_race_zip)
+    return list(novel_raceids), list(novel_raceid_urls)
+
+
 def main():
 # get scraping target and login info from config file
     configFile='../hracing_private/scraping_payload.ini'
@@ -152,8 +169,9 @@ def main():
     oriheader=dict(pageConfig['oriheader'])
     payload=dict(pageConfig['payload'])
 
-    raceids, raceid_urls=download_list_of_races(oriheader)
-    scrape_races(raceids, raceid_urls, oriheader, payload)
+    raceids, raceid_urls = download_list_of_races(oriheader)
+    filtered_raceids, filtered_raceid_urls = get_races_IDs_not_in_db(raceids,raceid_urls)
+    scrape_races(filtered_raceids, filtered_raceid_urls, oriheader, payload)
 
 
 if __name__ == "__main__":
