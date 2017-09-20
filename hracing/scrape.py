@@ -6,13 +6,15 @@ import re
 import sys
 import time
 import pymongo
+import random
 from datetime import datetime, timedelta
 
 from hracing.db import parse_racesheet
 from hracing.db import mongo_insert_race
 from hracing.tools import delay_scraping
+from hracing.tools import shuffle_ids
 
-def download_list_of_races(oriheader,pastdays=3,datestr=None):
+def download_list_of_races(header,pastdays=3,datestr=None):
     """ Fetch a list of all raceIDs and raceURLs listed on host for a given day.
     Date is selected either as:
     a) pastdays (e.g. pastdays=1 means yesterday).
@@ -28,7 +30,7 @@ def download_list_of_races(oriheader,pastdays=3,datestr=None):
         d = datetime.today()-timedelta(days=int(pastdays))
         datestr = d.strftime('%Y-%m-%d')
     yesterdayurl = '/races?date=' + datestr
-    baseurl = 'https://' + oriheader['host']
+    baseurl = 'https://' + header['host']
     url = baseurl + yesterdayurl 
     # Actual download
     tpage=requests.get(url) 
@@ -62,7 +64,7 @@ def download_list_of_races(oriheader,pastdays=3,datestr=None):
     return raceids, raceid_urls
 
 
-def scrape_races(raceids,raceid_urls,oriheader,payload):
+def scrape_races(raceids,raceid_urls,header,payload):
     """ Fetch a list of all races from host for a given day.
     Date is selected either as:
     a) pastdays (e.g. pastdays=1 means yesterday).
@@ -72,24 +74,28 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
     data-base building since this avoids US/CAN races are not finished
     Return a list of raceids and raceid_urls, which are clustered according to race-location"""
 
-    baseurl='https://'+oriheader['host']
-    race_min_dur=25 # minimum time(s)/race download to avoid getting kicked
-    form_min_dur=3 # minimum time(s)/form download to avoid getting kicked
+    baseurl='https://'+header['host']
+    race_min_dur=30 # minimum time(s)/race download to avoid getting kicked
+    form_min_dur=6 # minimum time(s)/form download to avoid getting kicked
+    reconnect_dur=500 # minimum time ind s to wait before reconnecting after losing connection
     d=datetime.today()
     a=time.monotonic()
     tries=1
     
+    #Shuffle order of races
+    raceids,raceid_urls=shuffle_ids(raceids,raceid_urls)   
     #Open new session...
     with requests.Session() as s:              
         p = s.post(baseurl+'/auth/validatepostajax',
-        headers = oriheader,
+        headers = header,
         data=payload)
+ 
     #For each race location...
     for (i, raceid_url) in enumerate(raceid_urls):
         if not re.search('"login":true',p.text):
             with requests.Session() as s:              
                 p = s.post(baseurl+'/auth/validatepostajax',
-                headers = oriheader,
+                headers = header,
                 data=payload)
         try: 
             #For each single race...
@@ -99,7 +105,7 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
             start_time=time.monotonic()
             #Get current racesheet
             racesheet=s.get(baseurl+raceid_url,
-                                    headers = oriheader,
+                                    headers = header,
                                     cookies=s.cookies)
             #Get horseforms urls for that race                    
             horseform_urls=(re.findall("window.open\(\'(.+?)', \'Formguide\'",
@@ -109,7 +115,7 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
             for (k, horseform_url) in enumerate(horseform_urls):
                 start_time_2=time.monotonic()
                 forms.append(s.get(baseurl+horseform_url,
-                                         headers = oriheader,
+                                         headers = header,
                                          cookies=s.cookies))
                 delay_scraping(start_time_2,form_min_dur)
             # Try parsing current race and add to mogodb. If something fails
@@ -139,10 +145,10 @@ def scrape_races(raceids,raceid_urls,oriheader,payload):
         except requests.exceptions.RequestException as e:
             print(e)
             tries=tries+1
-            time.sleep(600) # wait ten minutes before next try
+            time.sleep(reconnect_dur) # wait ten minutes before next try
             print("Download exception, trying to continue in 10 mins"
                 +d.strftime('%Y-%m-%d-%H-%M'))
-            if tries > 4:
+            if tries > 10:
                 print(str(tries) + "Download exceptions, exiting loop")
                 break
     print("Finished: Download race xmls: "
@@ -166,12 +172,12 @@ def main():
     configFile='../hracing_private/scraping_payload.ini'
     pageConfig = configparser.ConfigParser()
     pageConfig.read(configFile)
-    oriheader=dict(pageConfig['oriheader'])
+    header=dict(pageConfig['header'])
     payload=dict(pageConfig['payload'])
 
-    raceids, raceid_urls = download_list_of_races(oriheader)
+    raceids, raceid_urls = download_list_of_races(header)
     filtered_raceids, filtered_raceid_urls = get_races_IDs_not_in_db(raceids,raceid_urls)
-    scrape_races(filtered_raceids, filtered_raceid_urls, oriheader, payload)
+    scrape_races(filtered_raceids, filtered_raceid_urls, header, payload)
 
 
 if __name__ == "__main__":

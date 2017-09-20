@@ -1,4 +1,5 @@
 import time
+import random
 
 def flatten(l, ltypes=(list, tuple)):
     """ Flattens nested lists l to yield a 1-d list"""
@@ -51,8 +52,14 @@ def delay_scraping(start_time, target_duration):
      of loop and waits for the remainder.
      Slows scraping to avoid getting kicked from server"""
     curr_time=time.monotonic()-start_time
-    wait_time=target_duration-curr_time
+    wait_time=target_duration-curr_time+random.normalvariate(0, target_duration/2)
     if wait_time>0:
         time.sleep(wait_time) 
     
-    
+def shuffle_ids(raceids,raceid_urls):
+    both = list(zip(raceids,raceid_urls))
+    random.shuffle(both)
+    raceids_shuffled,raceid_urls_shuffled = zip(*both)
+    raceids_shuffled = list(raceids_shuffled)
+    raceid_urls_shuffled = list(raceid_urls_shuffled)
+    return raceids_shuffled,raceid_urls_shuffled
