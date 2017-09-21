@@ -75,8 +75,8 @@ def scrape_races(raceids,raceid_urls,header,payload):
     Return a list of raceids and raceid_urls, which are clustered according to race-location"""
 
     baseurl='https://'+header['host']
-    race_min_dur=30 # minimum time(s)/race download to avoid getting kicked
-    form_min_dur=6 # minimum time(s)/form download to avoid getting kicked
+    race_min_dur=40 # minimum time(s)/race download to avoid getting kicked
+    form_min_dur=10 # minimum time(s)/form download to avoid getting kicked
     reconnect_dur=500 # minimum time ind s to wait before reconnecting after losing connection
     d=datetime.today()
     a=time.monotonic()
