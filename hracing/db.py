@@ -9,6 +9,7 @@ from hracing.tools import isnumber
 from hracing.tools import bf4_text # checks if bf4 elements exist
 from IPython.core.debugger import set_trace
 
+#### DATA PARSING AND INPUT TO DB        
 
 def parse_racesheet(racesheet,forms,verbose = False):
     """ Parse html in racesheet, get content, return race as hierarchical dict """
@@ -166,12 +167,27 @@ def _parse_finish(html):
     ### 3.) ADD FANCY GRAPHS TO DATA DESCRIPTION
     ### 5.) REFACTURE AND IMPELEMENT OLD PIPELINE SETUP AND ML
               
-    # Call mongoDB and dump race
 def mongo_insert_race(race):
     """ Take single race, add to local mongoDB, make race_ID index """
     client = pymongo.MongoClient()
     db = client.races
     db.races.create_index([("race_ID", pymongo.ASCENDING)], unique=True)
     results = db.races.insert_one(race)
-        
 
+#### DATA EXTRACTION FROM DB        
+def race_to_df(race_dict):
+    '''Function that generating a pandas df from a db race entry.
+    Df will contain one line per runner with race-level and finish info'''
+    # Generate tables with race-level, horse-level, and finsh info 
+    race_level_keys=race_dict.keys()-['_id','horses','finish']
+    race_generals = { k: race_dict[k] for k in race_level_keys }
+    df_race_level=pd.DataFrame(race_generals,index=[race_generals['race_ID']])
+    df_horse_level=pd.DataFrame(race_dict['horses'])
+    df_finish=pd.DataFrame(race_dict['finish'])
+    # Cross join race*horse (for some stupid reason not yet included in pandas so extra temp_keys cludge is needed)
+    df_race_level['temp_key']=1
+    df_horse_level['temp_key']=1
+    df_race_n_horse=pd.merge(df_race_level,df_horse_level,on='temp_key')
+    # Left join on starter_no1 to add info on winners
+    df=pd.merge(df_race_n_horse,pd_finish[['starter_no1','place']], on='starter_no1',how='left')
+    return df
