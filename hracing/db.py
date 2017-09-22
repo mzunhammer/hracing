@@ -84,7 +84,6 @@ def _parse_horse_level(html,forms):
             horse['odd'] = float(odd_txt.replace(',','.').replace('-','nan')) if odd_txt else float('nan')
             horse['short_forms']=_extract_short_forms(clearfix.table)
             horse['long_forms'] = _extract_long_forms(forms[i])
-            horse['long_forms'] = ""
         else:
            print('Warning: Horse with name: could not be parsed properly.')
            horse = {}
@@ -161,8 +160,8 @@ def _parse_finish(html):
             
         
     ### TODO:
-    ### 1.) ADD COMPARISON OF RACE_ID LIST WITH DB TO ALLOW CONTINUING DOWNLOADS
-    ### 2.) PERFORM ONE COMPLETE IMPORT RUN ON NEW SITE
+    ### 1.) Function for creating pandas df from mongoDB
+    ### 2.)
     ### 3.) DESCRIPTICE GRAPHS FOR PRESENTATION
     ### 3.) ADD FANCY GRAPHS TO DATA DESCRIPTION
     ### 5.) REFACTURE AND IMPELEMENT OLD PIPELINE SETUP AND ML
