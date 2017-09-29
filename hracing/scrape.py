@@ -75,9 +75,10 @@ def scrape_races(raceids,raceid_urls,header,payload):
     Return a list of raceids and raceid_urls, which are clustered according to race-location"""
 
     baseurl='https://'+header['host']
-    race_min_dur=40 # minimum time(s)/race download to avoid getting kicked
-    form_min_dur=10 # minimum time(s)/form download to avoid getting kicked
-    reconnect_dur=500 # minimum time ind s to wait before reconnecting after losing connection
+    race_dur_sd=30 # minimum time(s)/race download to avoid getting kicked
+    form_dur_sd=8 # minimum time(s)/form download to avoid getting kicked
+    reconnect_dur=60 # minimum time ind s to wait before reconnecting after losing connection
+    max_tries=50
     d=datetime.today()
     a=time.monotonic()
     tries=1
@@ -100,7 +101,7 @@ def scrape_races(raceids,raceid_urls,header,payload):
         try: 
             #For each single race...
             print("Start downloading race_ID: "+raceids[i]+
-                " ("+str(i) +"/"+str(len(raceid_urls))+")")
+                " ("+str(i+1) +"/"+str(len(raceid_urls))+")")
             #Check current time
             start_time=time.monotonic()
             #Get current racesheet
@@ -117,7 +118,7 @@ def scrape_races(raceids,raceid_urls,header,payload):
                 forms.append(s.get(baseurl+horseform_url,
                                          headers = header,
                                          cookies=s.cookies))
-                delay_scraping(start_time_2,form_min_dur)
+                delay_scraping(start_time_2,form_dur_sd)
             # Try parsing current race and add to mogodb. If something fails
             # Save race as .txt in folder for troubleshooting.
             
@@ -135,7 +136,7 @@ def scrape_races(raceids,raceid_urls,header,payload):
 #                        with open(rawtextFilename, 'wb') as text_file:
 #                            text_file.write(racesheet.content)
                 
-            delay_scraping(start_time,race_min_dur)# Slow scraping to avoid getting kicked from server.
+            delay_scraping(start_time,race_dur_sd)# Slow scraping to avoid getting kicked from server.
 
             # Print current runtime, current race, and number of forms extracted  
             print("Finished: " +str(time.monotonic()-a))
@@ -146,9 +147,9 @@ def scrape_races(raceids,raceid_urls,header,payload):
             print(e)
             tries=tries+1
             time.sleep(reconnect_dur) # wait ten minutes before next try
-            print("Download exception, trying to continue in 10 mins"
+            print("Download exception, trying to continue in "+str(reconnect_dur)+" seconds "
                 +d.strftime('%Y-%m-%d-%H-%M'))
-            if tries > 10:
+            if tries > max_tries:
                 print(str(tries) + "Download exceptions, exiting loop")
                 break
     print("Finished: Download race xmls: "
