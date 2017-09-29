@@ -42,8 +42,8 @@ def _parse_race_level(html):
     race['type_short'] = top_container.i["class"][1]
     race['race_number'] = int(bf4_text(race_info_box('div',{'class':'counter'})[0]).strip())
     stakes_raw = bf4_text(race_info_box.find('li',{'class':'stakes'}))
-    race['stakes'] = float(stakes_raw.split()[0]) if stakes_raw else float('nan')
-    race['currency'] = stakes_raw.split()[1] if stakes_raw else ""
+    race['stakes'] = float(stakes_raw.split()[0].replace('.','')) if stakes_raw else float('nan')
+    race['currency'] = stakes_raw.split()[1] if len(stakes_raw.split())>1 else ""
     return race
 
 def _parse_horse_level(html,forms):
