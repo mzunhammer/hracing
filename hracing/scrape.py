@@ -93,65 +93,67 @@ def scrape_races(raceids,raceid_urls,header,payload):
  
     #For each race location...
     for (i, raceid_url) in enumerate(raceid_urls):
-        if not re.search('"login":true',p.text):
-            with requests.Session() as s:              
-                p = s.post(baseurl+'/auth/validatepostajax',
-                headers = header,
-                data=payload)
-        try: 
-            #For each single race...
-            print("Start downloading race_ID: "+raceids[i]+
-                " ("+str(i+1) +"/"+str(len(raceid_urls))+")")
-            #Check current time
-            start_time=time.monotonic()
-            #Get current racesheet
-            racesheet=s.get(baseurl+raceid_url,
-                                    headers = header,
-                                    cookies=s.cookies)
-            #Get horseforms urls for that race                    
-            horseform_urls=(re.findall("window.open\(\'(.+?)', \'Formguide\'",
-                                       racesheet.text))
-            forms=[]
-            #Get horseforms-sheets for that race
-            for (k, horseform_url) in enumerate(horseform_urls):
-                start_time_2=time.monotonic()
-                forms.append(s.get(baseurl+horseform_url,
-                                         headers = header,
-                                         cookies=s.cookies))
-                delay_scraping(start_time_2,form_dur_sd)
-            # Try parsing current race and add to mogodb. If something fails
-            # Save race as .txt in folder for troubleshooting.
-            
-            # UNCOMMENT TRY/EXCEPT WHEN UP AND RUNNING
-            #try: 
-            race=parse_racesheet(racesheet,forms)
-            mongo_insert_race(race)
-#                    except Exception as e:
-#                        #Save raw html text to file for debugging purposes, overwrite every time
-#                        errordump='../hracing_private/failed_parsing/'
-#                        rawtextFilename=errordump+str(raceids[i][j])+'.txt'
-#                        print('Error when parsing race_ID: '+str(raceids[i][j])+'. Page saved in '+errordump)
-#                        print('Error msg for '+str(raceids[i][j])+': \n'+str(e))
-#
-#                        with open(rawtextFilename, 'wb') as text_file:
-#                            text_file.write(racesheet.content)
+        while True: # needed in combi with except... continue to re-iterate if download fails
+            if not re.search('"login":true',p.text):
+                with requests.Session() as s:              
+                    p = s.post(baseurl+'/auth/validatepostajax',
+                    headers = header,
+                    data=payload)
+            try: 
+                #For each single race...
+                print("Start downloading race_ID: "+raceids[i]+
+                    " ("+str(i+1) +"/"+str(len(raceid_urls))+")")
+                #Check current time
+                start_time=time.monotonic()
+                #Get current racesheet
+                racesheet=s.get(baseurl+raceid_url,
+                                        headers = header,
+                                        cookies=s.cookies)
+                #Get horseforms urls for that race                    
+                horseform_urls=(re.findall("window.open\(\'(.+?)', \'Formguide\'",
+                                           racesheet.text))
+                forms=[]
+                #Get horseforms-sheets for that race
+                for (k, horseform_url) in enumerate(horseform_urls):
+                    start_time_2=time.monotonic()
+                    forms.append(s.get(baseurl+horseform_url,
+                                             headers = header,
+                                             cookies=s.cookies))
+                    delay_scraping(start_time_2,form_dur_sd)
+                # Try parsing current race and add to mogodb. If something fails
+                # Save race as .txt in folder for troubleshooting.
                 
-            delay_scraping(start_time,race_dur_sd)# Slow scraping to avoid getting kicked from server.
-
-            # Print current runtime, current race, and number of forms extracted  
-            print("Finished: " +str(time.monotonic()-a))
-                     # +"   n forms: "+str(len(curr_forms)))
-                 
-        #Exception of Request
-        except requests.exceptions.RequestException as e:
-            print(e)
-            tries=tries+1
-            time.sleep(reconnect_dur) # wait ten minutes before next try
-            print("Download exception, trying to continue in "+str(reconnect_dur)+" seconds "
-                +d.strftime('%Y-%m-%d-%H-%M'))
-            if tries > max_tries:
-                print(str(tries) + "Download exceptions, exiting loop")
-                break
+                # UNCOMMENT TRY/EXCEPT WHEN UP AND RUNNING
+                #try: 
+                race=parse_racesheet(racesheet,forms)
+                mongo_insert_race(race)
+#                        except Exception as e:
+#                            #Save raw html text to file for debugging purposes, overwrite every time
+#                            errordump='../hracing_private/failed_parsing/'
+#                            rawtextFilename=errordump+str(raceids[i][j])+'.txt'
+#                            print('Error when parsing race_ID: '+str(raceids[i][j])+'. Page saved in '+errordump)
+#                            print('Error msg for '+str(raceids[i][j])+': \n'+str(e))
+#    
+#                            with open(rawtextFilename, 'wb') as text_file:
+#                                text_file.write(racesheet.content)
+                    
+                delay_scraping(start_time,race_dur_sd)# Slow scraping to avoid getting kicked from server.
+    
+                # Print current runtime, current race, and number of forms extracted  
+                print("Finished: " +str(time.monotonic()-a))
+                         # +"   n forms: "+str(len(curr_forms)))
+                break     
+            #Exception of Request
+            except requests.exceptions.RequestException as e:
+                print(e)
+                tries=tries+1
+                time.sleep(reconnect_dur) # wait ten minutes before next try
+                print("Download exception, trying to continue in "+str(reconnect_dur)+" seconds "
+                    +d.strftime('%Y-%m-%d-%H-%M'))
+                if tries > max_tries:
+                    print(str(tries) + "Download exceptions, exiting loop")
+                    break
+                continue
     print("Finished: Download race xmls: "
             + d.strftime('%Y-%m-%d-%H-%M'))
 
