@@ -94,7 +94,7 @@ def _parse_horse_level(html,forms):
 def _extract_short_forms(formen_table):
     #Extract forms (prior race performance) from tables in racecards. If there are no prior formen, there are is no table...
     if formen_table is not None:
-        currtable = cols_from_html_tbl(formen_table)
+        currheader, currtable = cols_from_html_tbl(formen_table)
         short_form={}
         short_form['past_racedates'] = [datetime.strptime(i,'%d.%m.%y') for i in currtable[0]]
         short_form['past_finishes'] = [float(i.strip('.')) if isnumber(i.strip('.'))
@@ -116,21 +116,26 @@ def _extract_long_forms(form):
     form_html = BeautifulSoup(form.content,'html5lib')
     overview = form_html.find('section',{'id':'formguideOverview'})
     form_main = form_html.find('section',{'id':'formguideForm'})
-    col = cols_from_html_tbl(form_main.table)
+    hdr, col = cols_from_html_tbl(form_main.table)
     if col:
-        long_form={}
-        long_form['past_racedates'] = [datetime.strptime(i,'%d.%m.%Y') for i in col[0]]
-        long_form['past_race_courses'] = col[2]
-        long_form['past_finishes'] = [float(i.strip('.')) if isnumber(i.strip('.'))
-            else float('nan') for i in col[1]]        
-        long_form['past_distances'] = [float(i.strip(' m')) if isnumber(i.strip(' m'))
-            else float('nan') for i in col[3]]        
-        long_form['past_stakes'] = [float(i) if isnumber(i)
-            else 'nan' for i in col[4]]        
-        long_form['past_jockeys'] = col[5]
-        long_form['past_odds'] = [float(i.replace(',','.').replace('-','nan')) if isnumber(i)
-            else float('nan') for i in col[6]]        
+        long_form = {}
         long_form['n_past_races'] = len(col[0])
+        long_form['past_racedates'] = [datetime.strptime(i,'%d.%m.%Y')
+            for i in col[hdr.index('Datum')]]
+        long_form['past_race_courses'] = col[hdr.index('Rennbahn')]
+        long_form['past_finishes'] = [float(i.strip('.')) if isnumber(i.strip('.'))
+            else float('nan') for i in col[hdr.index('Platz')]]        
+        long_form['past_distances'] = [float(i.strip(' m')) if isnumber(i.strip(' m'))
+            else float('nan') for i in col[hdr.index('Distanz')]]        
+        long_form['past_stakes'] = [float(i) if isnumber(i)
+            else 'nan' for i in col[hdr.index('Dotierung')]]        
+        long_form['past_odds'] = [float(i.replace(',','.').replace('-','nan')) if isnumber(i)
+            else float('nan') for i in col[hdr.index('Ev.-Quote')]]
+        try:
+            long_form['past_jockeys'] = col[hdr.index('Reiter')]
+        except:
+            long_form['past_jockeys'] = col[hdr.index('Fahrer')]
+            long_form['past_km_time'] = col[hdr.index('KM Zeit')]
     else:
         long_form={}
     return long_form 
@@ -140,7 +145,7 @@ def _parse_finish(html):
     finish_table = html.find('table',{'class':'finishTable'})
     finish_list = []
     if finish_table is not None: 
-        finish_tbl = cols_from_html_tbl(finish_table)
+        finish_hdr, finish_tbl = cols_from_html_tbl(finish_table)
         for i,row in enumerate(finish_tbl[0]):
             place = int(finish_tbl[0][i])
             starter_no1 = finish_tbl[1][i]

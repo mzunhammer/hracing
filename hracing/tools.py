@@ -1,5 +1,6 @@
 import time
 import random
+from pdb import set_trace
 
 def flatten(l, ltypes=(list, tuple)):
     """ Flattens nested lists l to yield a 1-d list"""
@@ -21,20 +22,28 @@ def bf4_text(bf4_element):
     """ Checks BeautifulSoup element for existence and returns str"""
     return "" if bf4_element is None else bf4_element.text
 
-def cols_from_html_tbl(tbl): 
+def cols_from_html_tbl(tbl):
     """ Extracts columns from html-table tbl and puts columns in a list.
     tbl must be a results-object from BeautifulSoup)"""
-    rows = tbl.tbody.find_all('tr')
-    if rows:
-        for row in rows:
+    #set_trace()
+    rows_head = tbl.thead.find_all('tr')
+    if rows_head:
+        hcols = rows_head[0].find_all(['td','th'])
+        for i,hcell in enumerate(hcols):
+            if not 'head_list' in locals(): head_list=[]
+            head_list.append(hcell.text)
+    else:
+        head_list=[]
+    rows_body = tbl.tbody.find_all('tr')
+    if rows_body:
+        for row in rows_body:
             cols = row.find_all('td')
-            for i,cell in enumerate(cols):
-                if not'col_list' in locals():
-                    col_list=[[] for x in range(len(cols))]
-                col_list[i].append(cell.text)
+            for j,cell in enumerate(cols):
+                if not 'col_list' in locals(): col_list=[[] for x in range(len(cols))]
+                col_list[j].append(cell.text)
     else:
         col_list=[]
-    return col_list
+    return head_list, col_list
     
 def isnumber(s):
     """ Checks if string can be converted to float and is >0"""
