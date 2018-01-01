@@ -1,12 +1,21 @@
 import pymongo
 import re
+import pandas as pd
+import numpy as np
 
+from statsmodels.tsa.arima_model import ARIMA
+from numpy.linalg import LinAlgError
 from datetime import datetime
 from bs4 import BeautifulSoup
+from currency_converter import CurrencyConverter
+from datetime import datetime
 
 from hracing.tools import cols_from_html_tbl
 from hracing.tools import isnumber
 from hracing.tools import bf4_text # checks if bf4 elements exist
+from hracing.tools import starter_no_2_int
+from hracing.tools import past_place_to_float
+
 from IPython.core.debugger import set_trace
 
 #### DATA PARSING AND INPUT TO DB        
@@ -119,7 +128,7 @@ def _extract_long_forms(form):
     hdr, col = cols_from_html_tbl(form_main.table)
     if col:
         long_form = {}
-        long_form['n_past_races'] = len(col[0])
+        long_form['n_past_races'] = list(range(len(col[0]),0,-1)) #len(col[0])
         long_form['past_racedates'] = [datetime.strptime(i,'%d.%m.%Y')
             for i in col[hdr.index('Datum')]]
         long_form['past_race_courses'] = col[hdr.index('Rennbahn')]
@@ -167,7 +176,6 @@ def _parse_finish(html):
         
     ### TODO:
     ### 1.) Function for creating pandas df from mongoDB
-    ### 2.)
     ### 3.) DESCRIPTICE GRAPHS FOR PRESENTATION
     ### 3.) ADD FANCY GRAPHS TO DATA DESCRIPTION
     ### 5.) REFACTURE AND IMPELEMENT OLD PIPELINE SETUP AND ML
@@ -184,15 +192,114 @@ def race_to_df(race_dict):
     '''Function that generating a pandas df from a db race entry.
     Df will contain one line per runner with race-level and finish info'''
     # Generate tables with race-level, horse-level, and finsh info 
-    race_level_keys=race_dict.keys()-['_id','horses','finish']
+    race_level_keys = race_dict.keys() - ['_id','horses','finish']
     race_generals = { k: race_dict[k] for k in race_level_keys }
-    df_race_level=pd.DataFrame(race_generals,index=[race_generals['race_ID']])
-    df_horse_level=pd.DataFrame(race_dict['horses'])
+    df_race_level = pd.DataFrame(race_generals,index=[race_generals['race_ID']])
+    df_horse_level = pd.DataFrame(race_dict['horses'])
     df_finish=pd.DataFrame(race_dict['finish'])
     # Cross join race*horse (for some stupid reason not yet included in pandas so extra temp_keys cludge is needed)
     df_race_level['temp_key']=1
     df_horse_level['temp_key']=1
     df_race_n_horse=pd.merge(df_race_level,df_horse_level,on='temp_key')
     # Left join on starter_no1 to add info on winners
-    df=pd.merge(df_race_n_horse,pd_finish[['starter_no1','place']], on='starter_no1',how='left')
+    try:
+        df=pd.merge(df_race_n_horse,df_finish[['starter_no1','place']], on='starter_no1',how='left')
+        df['key']=df['race_ID'].astype('str')+'_'+df['starter_no1']
+        df.set_index('key',inplace=True, verify_integrity=False)
+        return df
+    except KeyError:
+        print('Error extracting race_ID: '+str(race_dict['race_ID'])+' file skipped.')
+
+def df_clean_basic(df_c):
+    df_c['owner'] = df_c['owner'].str.strip()
+    df_c.drop(df_c[df_c["age"].isnull() |
+                  (df_c["age"] < 0) |
+                  (df_c["age"] > 20)].index, axis=0,inplace=True)
+    df_c.drop(df_c[df_c["distance"].isnull() |
+                  (df_c["distance"] < 100)].index, axis=0,inplace=True)
+    df_c.drop(df_c[df_c["weight"].isnull() |
+                  (df_c["weight"] < 40) |
+                  (df_c["weight"] > 125)].index, axis=0,inplace=True)
+    df_c.drop(df_c[df_c["n_starter"].isnull() |
+                  (df_c["n_starter"] < 2) |
+                  (df_c["n_starter"] > 30)].index, axis=0,inplace=True)
+    df_c.drop(df_c[(~((df_c["sex"] == "Stute") |
+                    (df_c["sex"] == "Hengst") |
+                    (df_c["sex"] == "Wallach")))].index, axis=0,inplace=True)
+    df_c.drop("temp_key", axis=1, inplace=True)
+    # Order matters!
+    df_c['race_type']='flat' # Flat is default
+    df_c.loc[(df_c['type_short']=='T') &
+             (df_c['type_long'].str.contains('Hürdenrennen')),'race_type']='hurdle'
+    df_c.loc[(df_c['type_short']=='T') &
+             (df_c['type_long'].str.contains('Jagdrennen')),'race_type']='hunt'
+    df_c.loc[(df_c['type_short']=='T') &
+             (df_c['type_long'].str.contains('Verkaufsrennen')),'race_type']='sale' # Verkaufsrennen overwrites the former!
+    df_c.loc[df_c['type_short']=='H','race_type']='harness' # =TRABRENNEN Harness is default if type_short=='H'
+    return df_c
+
+def df_format_types(df_c):
+    # Assign categorical types
+    df_c["sex"] = df_c["sex"].astype('category')
+    df_c["country"] = df_c["country"].astype('category')
+    df_c["race_name"] = df_c["race_name"].astype('category')
+    df_c["type_short"] = df_c["type_short"].astype('category')
+    df_c['race_type'] = df_c["race_type"].astype('category')
+    # Assign numeric types
+    df_c['starter_no1_int']=df_c['starter_no1'].apply(starter_no_2_int)
+    df_c['starter_no2_int']=df_c['starter_no2'].apply(starter_no_2_int)
+    return df_c
+    
+def long_form_to_df(l_form):
+    if l_form:
+        df_l_form=pd.DataFrame(l_form)
+        #1. Correct wrong import of past_finishes (saved as str in the past_race_courses column...)
+        if df_l_form['past_finishes'].isnull().all():
+            df_l_form['past_finishes']=df_l_form['past_race_courses'].apply(past_place_to_float)
+            if not df_l_form['past_finishes'].isnull().all():
+                df_l_form['past_race_courses']='NaN'
+        df_l_form.loc[df_l_form['past_finishes']==0,'past_finishes']=float('NaN') # C
+        #2. Correct wrong import of n_past_races (should not be the same for all, but increase with time)
+        if (df_l_form['n_past_races']==df_l_form['n_past_races'][0]).all(): # if all entries of n_past_races are the same as the first...
+            df_l_form['n_past_races'] = list(range(df_l_form.shape[0],0,-1)) #count backwards the number of race entries in long_forms
+    else:
+        df_l_form={}
+    return df_l_form
+    
+def long_forms_time_prepro(df):
+    if isinstance(df['long_forms_unpacked'], pd.DataFrame):
+        # For every long-form-entry compute time since todays race.
+        df['long_forms_unpacked']['past_racedates_diff']=(df['race_date_time']-
+                                                          df['long_forms_unpacked']['past_racedates'])/ np.timedelta64(1, 'D')
+        # Drop race_dates unrealistically long ago.
+        df['long_forms_unpacked'].drop(df['long_forms_unpacked'][(df['long_forms_unpacked']["past_racedates_diff"] > 365*25)].index, axis=0,inplace=True)
+        # Get distance from last race.
+        df['d_since_last_race']=df['long_forms_unpacked']['past_racedates_diff'].min()
+        df['long_form_exists']=True
+    else:
+        df['d_since_last_race']=float('NaN')
+        df['long_form_exists']=False
     return df
+
+def get_n_past_races(df_l_form):
+    if isinstance(df_l_form, pd.DataFrame):
+        n_past_races=df_l_form['n_past_races'].max()
+    else:
+        n_past_races=0
+    return n_past_races
+
+def get_mean_past_place(df_l_form):
+    if isinstance(df_l_form, pd.DataFrame):
+        mean_past_place=df_l_form['past_finishes'].mean(skipna=True)
+    else:
+        mean_past_place=float('NaN')
+    return mean_past_place
+
+def get_n_races_w_jockey(df):
+    if isinstance(df['long_forms_unpacked'], pd.DataFrame):
+        # When matchin jockey names cut last 5 chars. Some jockeynames are followed by country-names.
+        n_races_w_jockey=df['long_forms_unpacked']['past_jockeys'].str.match(df['jockey'][0:-5]).sum()
+        #n_races_w_jockey=int(n_races_w_jockey)
+    else:
+        n_races_w_jockey=0
+    return n_races_w_jockey

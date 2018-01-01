@@ -72,3 +72,21 @@ def shuffle_ids(raceids,raceid_urls):
     raceids_shuffled = list(raceids_shuffled)
     raceid_urls_shuffled = list(raceid_urls_shuffled)
     return raceids_shuffled,raceid_urls_shuffled
+    
+def starter_no_2_int(x):
+    try:
+        int_x=int(x)
+    except ValueError:
+        try:
+            int_x=int(x[:-1]) #catches cases where a single letter is added to number (e.g. 9A)
+        except ValueError:
+            int_x=0
+    return int_x
+
+def past_place_to_float(x):
+    float_x=float('nan')
+    try:
+        float_x=float(x.strip('.'))
+    except:
+        float_x=float('nan')
+    return float_x
