@@ -2,6 +2,7 @@ import pymongo
 import re
 import pandas as pd
 import numpy as np
+import warnings
 
 from statsmodels.tsa.arima_model import ARIMA
 from numpy.linalg import LinAlgError
@@ -16,7 +17,7 @@ from hracing.tools import bf4_text # checks if bf4 elements exist
 from hracing.tools import starter_no_2_int
 from hracing.tools import past_place_to_float
 
-from IPython.core.debugger import set_trace
+from IPython.core.debugger import set_trace #set_trace()
 
 #### DATA PARSING AND INPUT TO DB        
 
@@ -208,49 +209,87 @@ def race_to_df(race_dict):
         df.set_index('key',inplace=True, verify_integrity=False)
         return df
     except KeyError:
-        print('Error extracting race_ID: '+str(race_dict['race_ID'])+' file skipped.')
+        if df_finish.empty:
+            print('No finish data for race_ID: '+str(race_dict['race_ID'])+', file skipped.')
+        else:
+            print('Error extracting race_ID: '+str(race_dict['race_ID'])+' file skipped.')
+            set_trace()
 
-def df_clean_basic(df_c):
-    df_c['owner'] = df_c['owner'].str.strip()
-    df_c.drop(df_c[df_c["age"].isnull() |
-                  (df_c["age"] < 0) |
-                  (df_c["age"] > 20)].index, axis=0,inplace=True)
-    df_c.drop(df_c[df_c["distance"].isnull() |
-                  (df_c["distance"] < 100)].index, axis=0,inplace=True)
-    df_c.drop(df_c[df_c["weight"].isnull() |
-                  (df_c["weight"] < 40) |
-                  (df_c["weight"] > 125)].index, axis=0,inplace=True)
-    df_c.drop(df_c[df_c["n_starter"].isnull() |
-                  (df_c["n_starter"] < 2) |
-                  (df_c["n_starter"] > 30)].index, axis=0,inplace=True)
-    df_c.drop(df_c[(~((df_c["sex"] == "Stute") |
-                    (df_c["sex"] == "Hengst") |
-                    (df_c["sex"] == "Wallach")))].index, axis=0,inplace=True)
-    df_c.drop("temp_key", axis=1, inplace=True)
-    # Order matters!
-    df_c['race_type']='flat' # Flat is default
-    df_c.loc[(df_c['type_short']=='T') &
-             (df_c['type_long'].str.contains('Hürdenrennen')),'race_type']='hurdle'
-    df_c.loc[(df_c['type_short']=='T') &
-             (df_c['type_long'].str.contains('Jagdrennen')),'race_type']='hunt'
-    df_c.loc[(df_c['type_short']=='T') &
-             (df_c['type_long'].str.contains('Verkaufsrennen')),'race_type']='sale' # Verkaufsrennen overwrites the former!
-    df_c.loc[df_c['type_short']=='H','race_type']='harness' # =TRABRENNEN Harness is default if type_short=='H'
-    return df_c
-
-def df_format_types(df_c):
+def dflean(df):
+    #Drop temporary key
+    df.drop("temp_key", axis=1, inplace=True)
+    #Clean string variables
+    df['owner'] = df['owner'].str.strip()
+    #Exclude nonsensical entries
+    df.drop(df[df["age"].isnull() |
+                  (df["age"] < 0) |
+                  (df["age"] > 20)].index, axis=0,inplace=True)
+    df.drop(df[df["distance"].isnull() |
+                  (df["distance"] < 100)].index, axis=0,inplace=True)
+    df.drop(df[df["weight"].isnull() |
+                  (df["weight"] < 40) |
+                  (df["weight"] > 125)].index, axis=0,inplace=True)
+    df.drop(df[df["n_starter"].isnull() |
+                  (df["n_starter"] < 2) |
+                  (df["n_starter"] > 30)].index, axis=0,inplace=True)
+    df.drop(df[(~((df["sex"] == "Stute") |
+                    (df["sex"] == "Hengst") |
+                    (df["sex"] == "Wallach")))].index, axis=0,inplace=True)
+    # Categorize race type. CAVE: Order below matters!
+    df['race_type']='flat' # Flat is default
+    df.loc[(df['type_short']=='T') &
+             (df['type_long'].str.contains('Hürdenrennen')),'race_type']='hurdle'
+    df.loc[(df['type_short']=='T') &
+             (df['type_long'].str.contains('Jagdrennen')),'race_type']='hunt'
+    df.loc[(df['type_short']=='T') &
+             (df['type_long'].str.contains('Verkaufsrennen')),'race_type']='sale' # Verkaufsrennen overwrites the former!
+    df.loc[df['type_short']=='H','race_type']='harness' # =TRABRENNEN Harness is default if type_short=='H'
     # Assign categorical types
-    df_c["sex"] = df_c["sex"].astype('category')
-    df_c["country"] = df_c["country"].astype('category')
-    df_c["race_name"] = df_c["race_name"].astype('category')
-    df_c["type_short"] = df_c["type_short"].astype('category')
-    df_c['race_type'] = df_c["race_type"].astype('category')
+    df["sex"] = df["sex"].astype('category')
+    df["country"] = df["country"].astype('category')
+    df["race_name"] = df["race_name"].astype('category')
+    df["type_short"] = df["type_short"].astype('category')
+    df['race_type'] = df["race_type"].astype('category')
     # Assign numeric types
-    df_c['starter_no1_int']=df_c['starter_no1'].apply(starter_no_2_int)
-    df_c['starter_no2_int']=df_c['starter_no2'].apply(starter_no_2_int)
-    return df_c
+    df['starter_no1_int']=df['starter_no1'].apply(starter_no_2_int)
+    df['starter_no2_int']=df['starter_no2'].apply(starter_no_2_int)
+    # Calculate uninformed and informed probabilities based on starters and odds
+    # Odds are provided as decimal (European) odds, i.e.
+    # potential winnings (net returns) + the stake (e.g. 6/5 or 1.2 plus 1 = 2.2).
+    # " See: https://en.wikipedia.org/wiki/Odds#Odds_against "
+    df['p_starter'] = (1/(df['n_starter']))
+    df['p_odd'] = (1/(df['odd']))
+    # Derivatives of place
+    # Derivate outcomes
+    df=df.assign(winner = 0) # Usually using one unit per bet
+    df.loc[df['place']==1,'winner']= 1 # Winner (for classification)
+    # Winner*Odds > Winnings (for regression)
+    df=df.assign(winning = -1) # Usually using one unit per bet
+    df.loc[df['place']==1,'winning']= df.odd[df['place']==1]-1 # ATTENTIONE: Winning horses get you A NET WIN OF ODDS MINUS YOUR BETSUM (! YOU HAVE TO SPEND MONEY FIRST, BEFORE GETTING THE RETURN)
+    # Convert Currencies
+    df.loc[(df["currency"]=="") & (df["country"]=="DEU"),"currency"]="EUR"
+    df.loc[(df["currency"]=="") & (np.isclose(df["stakes"],0)),"currency"]="EUR"
+    df["currency"].replace(to_replace="S$", value="SGD",inplace=True)
+    df["currency"].replace(to_replace="Eur", value="EUR",inplace=True)
+    df["currency"].replace(to_replace="AED", value="",inplace=True)
+    df.drop(df[df["currency"]==""].index, axis=0,inplace=True)
+    df["currency"]=df["currency"].astype('category')
+    c=CurrencyConverter()
+    df["stakes_eur"]=[c.convert(row["stakes"], row['currency'], 'EUR') for _,row in df.iterrows()]
     
-def long_form_to_df(l_form):
+    # Calculate within-race versions of predictor variables
+    with warnings.catch_warnings(): #Just to suppress NaN warning in case only NaN data are available for a given race
+        warnings.simplefilter("ignore", category=RuntimeWarning) #Just to suppress NaN warning in case only NaN data are available for a given race
+        byID=df.groupby('race_ID')
+        df=df.assign(WIage=byID['age'].transform(lambda x: x-np.nanmean(x)))
+        df=df.assign(WIweight=byID['weight'].transform(lambda x: x-np.nanmean(x)))
+        df=df.assign(bookieMargin=byID['p_odd'].transform(lambda x: (np.sum(x)-1) if np.sum(x)>1 else 'nan'))
+    return df
+# DROP RACES WHERE THERE IS A NEGATIVE BOOKIE-MARGIN (indicative of erronenous odds)    
+#    df = df.drop(df[df.bookieMargin<0].index) #Drop races with invalid raceID)    
+
+    
+def long_form_dict_to_df(l_form):
     if l_form:
         df_l_form=pd.DataFrame(l_form)
         #1. Correct wrong import of past_finishes (saved as str in the past_race_courses column...)
@@ -261,45 +300,40 @@ def long_form_to_df(l_form):
         df_l_form.loc[df_l_form['past_finishes']==0,'past_finishes']=float('NaN') # C
         #2. Correct wrong import of n_past_races (should not be the same for all, but increase with time)
         if (df_l_form['n_past_races']==df_l_form['n_past_races'][0]).all(): # if all entries of n_past_races are the same as the first...
-            df_l_form['n_past_races'] = list(range(df_l_form.shape[0],0,-1)) #count backwards the number of race entries in long_forms
+            df_l_form['n_past_races'] = list(range(df_l_form.shape[0],0,-1)) #count backwards the number of race entries in long_forms        
     else:
         df_l_form={}
     return df_l_form
     
-def long_forms_time_prepro(df):
+def prepro_long_forms(df):
     if isinstance(df['long_forms_unpacked'], pd.DataFrame):
+        # For every long-form add horse and racedate
+        df['long_forms_unpacked']['past_horsename'] = df['name']
+        df['long_forms_unpacked']['key'] = df['long_forms_unpacked']['past_racedates'].astype('str')+'_'+df['long_forms_unpacked']['past_horsename']
+        df['long_forms_unpacked'].set_index('key',inplace=True, verify_integrity=False)
         # For every long-form-entry compute time since todays race.
         df['long_forms_unpacked']['past_racedates_diff']=(df['race_date_time']-
                                                           df['long_forms_unpacked']['past_racedates'])/ np.timedelta64(1, 'D')
+        # Drop race_dates from the same date (new result has already been forwarded to database).
+        df['long_forms_unpacked'].drop(df['long_forms_unpacked'][(df['long_forms_unpacked']["past_racedates_diff"] < 1)].index, axis=0,inplace=True)
         # Drop race_dates unrealistically long ago.
         df['long_forms_unpacked'].drop(df['long_forms_unpacked'][(df['long_forms_unpacked']["past_racedates_diff"] > 365*25)].index, axis=0,inplace=True)
-        # Get distance from last race.
-        df['d_since_last_race']=df['long_forms_unpacked']['past_racedates_diff'].min()
-        df['long_form_exists']=True
-    else:
-        df['d_since_last_race']=float('NaN')
-        df['long_form_exists']=False
     return df
 
-def get_n_past_races(df_l_form):
-    if isinstance(df_l_form, pd.DataFrame):
-        n_past_races=df_l_form['n_past_races'].max()
-    else:
-        n_past_races=0
-    return n_past_races
-
-def get_mean_past_place(df_l_form):
-    if isinstance(df_l_form, pd.DataFrame):
-        mean_past_place=df_l_form['past_finishes'].mean(skipna=True)
-    else:
-        mean_past_place=float('NaN')
-    return mean_past_place
-
-def get_n_races_w_jockey(df):
+    # Get distance from last race.
+def transfer_long_form_info_to_df(df):
     if isinstance(df['long_forms_unpacked'], pd.DataFrame):
-        # When matchin jockey names cut last 5 chars. Some jockeynames are followed by country-names.
-        n_races_w_jockey=df['long_forms_unpacked']['past_jockeys'].str.match(df['jockey'][0:-5]).sum()
-        #n_races_w_jockey=int(n_races_w_jockey)
+        df['d_since_last_race'] = df['long_forms_unpacked']['past_racedates_diff'].min()
+        df['n_past_races'] = df['long_forms_unpacked']['n_past_races'].max()
+        df['mean_past_place'] = df['long_forms_unpacked']['past_finishes'].mean(skipna=True)
+        clean_jockey_name=re.sub("[\(\[].*?[\)\]]", "", df['jockey']) # When matchin jockey names cut any brackets (containing country-names etc.). They will cause trouble in matching below
+        df['n_races_w_jockey'] = df['long_forms_unpacked']['past_jockeys'].str.match(clean_jockey_name).sum()
+        # Finally add a logical to df helping with selecting entries with no long_forms
+        df['long_form_exists'] = True
     else:
-        n_races_w_jockey=0
-    return n_races_w_jockey
+        df['d_since_last_race'] = float('NaN')
+        df['n_past_races'] = 0
+        df['mean_past_place'] = float('NaN')
+        df['n_races_w_jockey'] = 0
+        df['long_form_exists'] = False
+    return df
