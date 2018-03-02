@@ -215,7 +215,7 @@ def race_to_df(race_dict):
             print('Error extracting race_ID: '+str(race_dict['race_ID'])+' file skipped.')
             set_trace()
 
-def dflean(df):
+def df_clean(df):
     #Drop temporary key
     df.drop("temp_key", axis=1, inplace=True)
     #Clean string variables
@@ -282,11 +282,22 @@ def dflean(df):
         warnings.simplefilter("ignore", category=RuntimeWarning) #Just to suppress NaN warning in case only NaN data are available for a given race
         byID=df.groupby('race_ID')
         df=df.assign(WIage=byID['age'].transform(lambda x: x-np.nanmean(x)))
+        df=df.assign(n_nonrunner=byID['nonrunner'].transform(lambda x: np.sum(x)))
         df=df.assign(WIweight=byID['weight'].transform(lambda x: x-np.nanmean(x)))
         df=df.assign(bookieMargin=byID['p_odd'].transform(lambda x: (np.sum(x)-1) if np.sum(x)>1 else 'nan'))
+    df["n_starter_corr"]=df["n_starter"]-df["n_nonrunner"]
+    df["p_starter_corr"]= (1/(df['n_starter_corr']))
+    # Add dummy variables
+    dummy_df= pd.get_dummies(df, columns=['sex','country'], prefix='dummy', prefix_sep='_',
+        dummy_na=False, sparse=False, drop_first=False).filter(regex='^dummy_', axis=1)
+    df=pd.concat([df,dummy_df.filter(regex='^dummy_', axis=1)], axis=1) #unfortunately get_dummies drops the original vars, so join is necessary
+    
+    # Lastly (!) drop nonrunners... not before, as we need them to correct n_starter          
+    df.drop(df[df["nonrunner"]==True].index, axis=0,inplace=True)
+    # DROP RACES WHERE THERE IS A NEGATIVE BOOKIE-MARGIN (indicative of erronenous odds)    
+	#    df = df.drop(df[df.bookieMargin<0].index) #Drop races with invalid raceID) 
     return df
-# DROP RACES WHERE THERE IS A NEGATIVE BOOKIE-MARGIN (indicative of erronenous odds)    
-#    df = df.drop(df[df.bookieMargin<0].index) #Drop races with invalid raceID)    
+   
 
     
 def long_form_dict_to_df(l_form):
